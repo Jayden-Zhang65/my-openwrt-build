@@ -1,7 +1,11 @@
 name: Build MosDNS for OpenWrt 21.02.7
 
 on:
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch: # Allows you to trigger it manually
+
+env:
+  # This line removes the Node.js 20 deprecation warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
@@ -30,11 +34,10 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # Add sbwml's mosdns feed
+          # Add sbwml's mosdns package
           git clone https://github.com/sbwml/luci-app-mosdns package/mosdns
           
-          # Important: OpenWrt 21.02 has an old Go version. 
-          # sbwml's repo usually handles dependency, but we force update golang feed
+          # IMPORTANT: Replace old Golang with sbwml's updated version (Required for MosDNS v5)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
@@ -44,18 +47,21 @@ jobs:
       - name: Configure and Compile
         run: |
           cd sdk
-          # Select the package
           make defconfig
-          # We force select luci-app-mosdns
+          # Select MosDNS, the LuCI App, and the Chinese Translation
           echo "CONFIG_PACKAGE_luci-app-mosdns=y" >> .config
           echo "CONFIG_PACKAGE_mosdns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y" >> .config
           make defconfig
           
-          # Compile (using -j1 for higher success rate on dependencies, or -j$(nproc) for speed)
-          make package/mosdns/compile V=s
+          # Compile using all available CPU cores for speed
+          make package/mosdns/compile V=s -j$(nproc)
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mosdns-openwrt-21.02.7
-          path: sdk/bin/packages/mipsel_24kc/base/*.ipk
+          name: mosdns-openwrt-21.02.7-mt7621
+          # This path captures both the core mosdns app and the luci interface
+          path: |
+            sdk/bin/packages/mipsel_24kc/base/*.ipk
+            sdk/bin/packages/mipsel_24kc/luci/*.ipk

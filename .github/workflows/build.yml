@@ -16,17 +16,17 @@ jobs:
       - name: Initialization environment
         run: |
           sudo apt-get update
-          # Updated dependency list for Ubuntu 24.04
           sudo apt-get install -y build-essential clang flex bison g++ gawk \
-            gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+            gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
             python3-setuptools swig zlib1g-dev wget unzip rsync
 
-      - name: Download SDK
+      - name: Download and Extract SDK
         run: |
           SDK_URL="https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
-          wget -q $SDK_URL
-          tar xJf *.tar.xz
-          mv openwrt-sdk-* sdk
+          wget -q $SDK_URL -O sdk.tar.xz
+          mkdir sdk
+          # Extract directly into the sdk folder, stripping the top-level directory
+          tar -xJf sdk.tar.xz -C sdk --strip-components=1
 
       - name: Update Feeds & Add MosDNS
         run: |
@@ -34,10 +34,11 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # Add sbwml's mosdns
-          git clone https://github.com/sbwml/luci-app-mosdns package/mosdns
+          # Add sbwml's mosdns repo into the package directory
+          # This repo contains both 'mosdns' and 'luci-app-mosdns'
+          git clone https://github.com/sbwml/luci-app-mosdns package/mosdns-project
           
-          # Replace old Golang with updated version for MosDNS v5 compatibility
+          # Replace old Golang with updated version (Required for MosDNS v5)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
@@ -47,16 +48,15 @@ jobs:
       - name: Configure and Compile
         run: |
           cd sdk
-          # Force select packages
+          # Select MosDNS and its LuCI interface
           echo "CONFIG_PACKAGE_luci-app-mosdns=y" >> .config
           echo "CONFIG_PACKAGE_mosdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y" >> .config
           
-          # Regenerate config
           make defconfig
           
-          # Compile
-          make package/mosdns/compile V=s -j$(nproc)
+          # Compile (Note: building golang as a dependency may take ~15-20 mins)
+          make package/mosdns-project/luci-app-mosdns/compile V=s -j$(nproc)
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

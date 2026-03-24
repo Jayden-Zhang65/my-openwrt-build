@@ -31,25 +31,25 @@ jobs:
         run: |
           cd sdk
           
-          # 1. Update and install default feeds first to build the directory tree
+          # Initialize SDK feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 2. CRITICAL FIX: Replace Go with the 24.x branch (Patched for OpenWrt 21.02)
+          # CRITICAL FIX 1: Pull the default master branch of Golang to get Go 1.25+
           rm -rf feeds/packages/lang/golang
-          git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # 3. CRITICAL FIX: Replace old v2ray-geodata with the author's updated version
+          # Replace old v2ray-geodata with the required updated version
           rm -rf feeds/packages/net/v2ray-geodata
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
           
-          # 4. Clone mosdns (v5 branch) directly into package/ folder
+          # Clone mosdns v5 branch
           git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
           
-          # 5. CRITICAL FIX: Disable UPX compression to prevent Error 1 on MIPS router targets
+          # CRITICAL FIX 2: Disable UPX completely to prevent 'Error 1' at the .built stage
           sed -i '/upx/d' package/mosdns/mosdns/Makefile 2>/dev/null || true
           
-          # 6. Update again to register the newly added packages
+          # Register new packages
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -57,34 +57,33 @@ jobs:
         run: |
           cd sdk
           
-          # Force select everything needed
+          # Force select packages
           echo "CONFIG_PACKAGE_mosdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-mosdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_v2ray-geodata=y" >> .config
           
-          # Set Go proxy to prevent timeout/network errors during download
+          # Prevent timeout during module downloads
           export GOPROXY=https://proxy.golang.org,direct
           
           make defconfig
           
-          # Step 1: Compile Golang host tools first
+          # Step 1: Compile Golang host tools (Provides Go 1.25+)
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Step 2: Compile v2ray-geodata
+          # Step 2: Compile Geodata dependencies
           make package/v2ray-geodata/compile V=s -j$(nproc)
           
-          # Step 3: Compile MosDNS (Using -j1 for maximum stability on cross-compiling)
+          # Step 3: Compile MosDNS (No UPX)
           make package/mosdns/mosdns/compile V=s -j1
           
-          # Step 4: Compile the Web Interface (LuCI)
+          # Step 4: Compile the LuCI UI
           make package/mosdns/luci-app-mosdns/compile V=s -j$(nproc)
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mosdns-openwrt-21.02.7-mt7621
-          # Wildcards to grab the IPKs from wherever the SDK decides to output them
           path: |
             sdk/bin/packages/mipsel_24kc/*/mosdns*.ipk
             sdk/bin/packages/mipsel_24kc/*/luci-app-mosdns*.ipk

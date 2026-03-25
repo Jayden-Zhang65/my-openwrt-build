@@ -34,19 +34,31 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # Get modern Golang (Go 1.25+)
+          # 1. Use 24.x Golang (Guaranteed to successfully build on OpenWrt 21.02)
           rm -rf feeds/packages/lang/golang
-          git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
           
-          # Get updated Geodata
+          # 2. Get Geodata
           rm -rf feeds/packages/net/v2ray-geodata
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
           
-          # Clone MosDNS
+          # 3. Clone MosDNS
           git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
           
-          # THE MAGIC FIX: Prevent the ancient OpenWrt 'strip' tool from crashing on the modern Go binary.
-          # We tell the Makefile that 'strip' is just 'true' (a command that does nothing and returns success).
+          # =========================================================================
+          # THE MAGIC FIX: Inject an OpenWrt Hook to edit the source code on-the-fly
+          # This downgrades the 'go 1.25.0' requirement in go.mod to 'go 1.23.0' 
+          # so the 24.x compiler accepts it without crashing.
+          # =========================================================================
+          cat << 'EOF' >> package/mosdns/mosdns/Makefile
+          
+          define Build/Prepare/Post
+          	sed -i -E "s/^go .+/go 1.23.0/" $(PKG_BUILD_DIR)/go.mod
+          endef
+          Hooks/Prepare/Post += Build/Prepare/Post
+          EOF
+          
+          # 4. Prevent the ancient 'strip' tool from breaking the modern Go binary
           echo "STRIP:=true" >> package/mosdns/mosdns/Makefile
           
           ./scripts/feeds update -a
@@ -72,16 +84,16 @@ jobs:
           
           make defconfig
           
-          # Compile Golang Host Tool
+          # Step 1: Compile Golang Host Tool
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Compile Geodata
+          # Step 2: Compile Geodata
           make package/v2ray-geodata/compile V=s -j$(nproc)
           
-          # Compile MosDNS
+          # Step 3: Compile MosDNS
           make package/mosdns/mosdns/compile V=s -j1
           
-          # Compile LuCI UI
+          # Step 4: Compile LuCI UI
           make package/mosdns/luci-app-mosdns/compile V=s -j$(nproc)
 
       - name: Upload Artifacts

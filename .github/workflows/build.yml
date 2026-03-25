@@ -31,25 +31,24 @@ jobs:
         run: |
           cd sdk
           
-          # Initialize SDK feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # CRITICAL FIX 1: Pull the default master branch of Golang to get Go 1.25+
+          # Get modern Golang (Go 1.25+)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # Replace old v2ray-geodata with the required updated version
+          # Get updated Geodata
           rm -rf feeds/packages/net/v2ray-geodata
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
           
-          # Clone mosdns v5 branch
+          # Clone MosDNS
           git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
           
-          # CRITICAL FIX 2: Disable UPX completely to prevent 'Error 1' at the .built stage
-          sed -i '/upx/d' package/mosdns/mosdns/Makefile 2>/dev/null || true
+          # THE MAGIC FIX: Prevent the ancient OpenWrt 'strip' tool from crashing on the modern Go binary.
+          # We tell the Makefile that 'strip' is just 'true' (a command that does nothing and returns success).
+          echo "STRIP:=true" >> package/mosdns/mosdns/Makefile
           
-          # Register new packages
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -57,27 +56,32 @@ jobs:
         run: |
           cd sdk
           
-          # Force select packages
+          # Setup configuration
           echo "CONFIG_PACKAGE_mosdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-mosdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_v2ray-geodata=y" >> .config
           
-          # Prevent timeout during module downloads
+          # Explicitly disable UPX compression via config
+          echo "# CONFIG_PACKAGE_mosdns_compress_upx is not set" >> .config
+          echo "CONFIG_PACKAGE_mosdns_compress_none=y" >> .config
+          
+          # Global safety flags
           export GOPROXY=https://proxy.golang.org,direct
+          export GOMAXPROCS=1
           
           make defconfig
           
-          # Step 1: Compile Golang host tools (Provides Go 1.25+)
+          # Compile Golang Host Tool
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Step 2: Compile Geodata dependencies
+          # Compile Geodata
           make package/v2ray-geodata/compile V=s -j$(nproc)
           
-          # Step 3: Compile MosDNS (No UPX)
+          # Compile MosDNS
           make package/mosdns/mosdns/compile V=s -j1
           
-          # Step 4: Compile the LuCI UI
+          # Compile LuCI UI
           make package/mosdns/luci-app-mosdns/compile V=s -j$(nproc)
 
       - name: Upload Artifacts

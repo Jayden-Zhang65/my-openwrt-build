@@ -34,15 +34,16 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 1. Update Golang to the 24.x branch (Provides a modern Go compiler for 21.02)
+          # 1. Get the LATEST Golang compiler (Provides Go 1.25+)
+          # (Removed the -b 24.x flag that was holding it back to 1.24)
           rm -rf feeds/packages/lang/golang
-          git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
           # 2. Get updated Geodata (Required by MosDNS)
           rm -rf feeds/packages/net/v2ray-geodata
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
           
-          # 3. Clone MosDNS using the dedicated openwrt-21.02 branch!
+          # 3. Clone MosDNS using the dedicated openwrt-21.02 branch
           git clone https://github.com/sbwml/luci-app-mosdns -b openwrt-21.02 package/mosdns
           
           ./scripts/feeds update -a
@@ -67,13 +68,13 @@ jobs:
           
           make defconfig
           
-          # Step 1: Compile Golang Host Tool
+          # Step 1: Compile the new Go 1.25+ Host Tool
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
           # Step 2: Compile Geodata
           make package/v2ray-geodata/compile V=s -j$(nproc)
           
-          # Step 3: Compile MosDNS (Native support branch!)
+          # Step 3: Compile MosDNS
           make package/mosdns/mosdns/compile V=s -j$(nproc)
           
           # Step 4: Compile LuCI UI

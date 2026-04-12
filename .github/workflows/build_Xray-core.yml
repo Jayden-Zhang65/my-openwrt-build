@@ -76,9 +76,10 @@ jobs:
           # Build the Go compiler first
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Build Xray-core
-          # GOMIPS=softfloat is used to ensure compatibility with MT7621
-          make package/xray-core/compile V=s -j$(nproc) GO_PKG_VARS="GOMIPS=softfloat"
+          # Build Xray-core (do NOT pass GO_PKG_VARS= on the make command line: it overrides
+          # golang-package.mk's GO_PKG_VARS and drops GOOS/GOARCH/GOPATH/GOCACHE/CGO_* → "No binaries were built".)
+          # MT7621 / mipsel_24kc SDK defconfig already sets CONFIG_HAS_FPU=n → golang-values.mk uses GOMIPS=softfloat.
+          make package/xray-core/compile V=s -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

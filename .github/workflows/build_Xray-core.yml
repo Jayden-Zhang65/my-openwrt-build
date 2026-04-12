@@ -1,10 +1,11 @@
-name: Build Xray-core 1.8.4 for OpenWrt 21.02.7
+name: Build Xray 1.8.4 for MT7621 (21.02.7)
 
 on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SDK_URL: "https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+  XRAY_VER: "1.8.4"
 
 jobs:
   build:
@@ -13,63 +14,61 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialization environment
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang flex bison g++ gawk \
             gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
-            python3-setuptools swig zlib1g-dev wget unzip rsync upx-ucl
+            python3-setuptools swig zlib1g-dev wget unzip rsync ccache
 
-      - name: Download and Extract SDK
+      - name: Download and Prepare SDK
         run: |
-          SDK_URL="https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
-          wget -q $SDK_URL -O sdk.tar.xz
+          wget -qO sdk.tar.xz $SDK_URL
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
+          cd sdk
+          # Add the Passwall feed (contains the Xray Makefile)
+          echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
+          ./scripts/feeds update -a
 
-      - name: Update Feeds & Add Passwall
+      - name: Fix Golang & Xray Feeds
         run: |
           cd sdk
-          # 1. Add Passwall Packages feed
-          echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages" >> feeds.conf.default
-          
-          ./scripts/feeds update -a
-          
-          # 2. Use modern Golang (Go 1.25+)
+          # 1. Replace the old Go (21.02's Go is too old) with a modern version
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
+          # 2. Remove the default Xray from the packages feed to avoid conflicts
+          rm -rf feeds/packages/net/xray-core
+          
           # 3. Install all feeds
           ./scripts/feeds install -a
-          
-          # 4. THE MAGIC FIX: Downgrade Xray to 1.8.4 inside the feed folder
-          # In the feed system, the Makefile is located in feeds/passwall_packages/xray-core/
-          cd feeds/passwall_packages/xray-core
-          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=1.8.4/g' Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
-          
-          # Disable UPX and force STRIP:=true (same as MosDNS fix)
-          sed -i '/upx/d' Makefile 2>/dev/null || true
-          echo "STRIP:=true" >> Makefile
 
-      - name: Configure and Compile
+      - name: Patch Xray Makefile to 1.8.4
+        run: |
+          cd sdk/feeds/passwall_packages/xray-core
+          # Set the version
+          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
+          # Skip hash check since we changed the version manually
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
+          # Disable UPX (causes issues on some mips devices)
+          sed -i '/upx/d' Makefile 2>/dev/null || true
+
+      - name: Compile Xray-core
         run: |
           cd sdk
-          # Select Xray-core
+          # Create a default config and select Xray
+          make defconfig
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           
-          export GOPROXY=https://proxy.golang.org,direct
-          make defconfig
-          
-          # Step 1: Compile Golang Host Tool
+          # Compile Go host tool first (crucial step)
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Step 2: Compile Xray-core using the correct feed-based path
-          # For feeds, the path is package/feeds/[feed_name]/[package_name]
-          make package/feeds/passwall_packages/xray-core/compile V=s STRIP=true -j$(nproc)
+          # Compile Xray
+          make package/xray-core/compile V=s -j$(nproc)
 
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: xray-core-1.8.4-mt7621
-          path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk
+          path: sdk/bin/packages/mipsel_24kc/passwall_packages/xray-core*.ipk

@@ -1,14 +1,17 @@
-name: Build Xray 1.8.24 for MT7621 (21.02.7)
+name: Build xray-core (Passwall) for MT7621 (OpenWrt 21.02.7)
 
 on:
   workflow_dispatch:
 
 env:
   SDK_URL: "https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
-  XRAY_VER: "1.8.24"
-  # sbwml default branch (26.x) ships Go 1.26+, which breaks Xray 1.8.24's pinned sagernet/sing v0.4.1
-  # ("invalid reference to net.errNoSuchInterface"). Use 21.x → Go 1.21.x, matches OpenWrt 21.02 + go 1.21.4 in go.mod.
-  SBWML_GOLANG_BRANCH: "21.x"
+  # LuCI 25.8.x expects current Xray (e.g. stream network "raw", ≥ v24.9.30). Version is taken from
+  # openwrt-passwall-packages xray-core/Makefile (PKG_VERSION / PKG_HASH) — do not override to 1.x.
+  PASSWALL_PACKAGES_REPO: "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
+  # Branch or commit SHA (feeds.conf src-git accepts both). Pin a commit for reproducible builds.
+  PASSWALL_PACKAGES_REF: "main"
+  # Xray 26.x requires Go 1.26 (see XTLS/Xray-core go.mod). sbwml 26.x provides it; 21.x Go is too old.
+  SBWML_GOLANG_BRANCH: "26.x"
 
 jobs:
   build:
@@ -26,63 +29,45 @@ jobs:
 
       - name: Download and Prepare SDK
         run: |
-          wget -qO sdk.tar.xz $SDK_URL
+          wget -qO sdk.tar.xz "$SDK_URL"
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
-          # Add the Passwall feed
-          echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
+          echo "src-git passwall_packages ${{ env.PASSWALL_PACKAGES_REPO }};${{ env.PASSWALL_PACKAGES_REF }}" >> feeds.conf.default
           ./scripts/feeds update -a
 
-      - name: Fix Golang & Xray Feeds
+      - name: Replace golang feed and de-duplicate xray-core
         run: |
           cd sdk
-          # 1. Replace the old Go with modern version (Crucial for 1.8.24)
           rm -rf feeds/packages/lang/golang
           git clone --depth 1 -b "${{ env.SBWML_GOLANG_BRANCH }}" \
             https://github.com/sbwml/packages_lang_golang.git feeds/packages/lang/golang
-          
-          # 2. Remove the official Xray to prevent naming conflicts
+
           rm -rf feeds/packages/net/xray-core
-          
-          # 3. Strip ca-bundle dependency (This fixes "No rule to make target")
-          # The SDK doesn't have ca-bundle source, so we must remove it from the requirements.
+
+          # SDK image has no ca-bundle package source; drop the dep so the ipkg can install.
           sed -i 's/+ca-bundle//g' feeds/passwall_packages/xray-core/Makefile
           sed -i 's/+ca-certificates//g' feeds/passwall_packages/xray-core/Makefile
-          
-          # 4. Install feeds
+
           ./scripts/feeds install -a
-          
-          # 5. FORCE SYMLINK (Your functional method)
           ln -sf ../feeds/passwall_packages/xray-core package/xray-core
 
-      - name: Patch Xray Makefile to 1.8.24
+      - name: Show pinned Xray version
         run: |
-          cd sdk/package/xray-core
-          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
-          sed -i '/upx/d' Makefile 2>/dev/null || true
+          grep -E '^PKG_(VERSION|HASH):=' sdk/feeds/passwall_packages/xray-core/Makefile || true
 
-      - name: Compile Xray-core
+      - name: Compile xray-core
         run: |
           cd sdk
-          # Generate config
           make defconfig
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
-          
-          # Use Go Proxy to ensure dependencies are downloaded correctly
           export GOPROXY=https://proxy.golang.org,direct
-          
-          # Build the Go compiler first
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
-          
-          # Build Xray-core (do NOT pass GO_PKG_VARS= on the make command line: it overrides
-          # golang-package.mk's GO_PKG_VARS and drops GOOS/GOARCH/GOPATH/GOCACHE/CGO_* → "No binaries were built".)
-          # MT7621 / mipsel_24kc SDK defconfig already sets CONFIG_HAS_FPU=n → golang-values.mk uses GOMIPS=softfloat.
+          # Do not pass GO_PKG_VARS= on the command line (breaks golang-package.mk env → "No binaries were built").
           make package/xray-core/compile V=s -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xray-core-1.8.24-mt7621
+          name: xray-core-openwrt-21.02.7-mt7621-passwall-packages
           path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk

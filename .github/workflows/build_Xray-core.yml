@@ -1,4 +1,4 @@
-name: Build Xray 1.8.24 for MT7621 (Go 1.22 Fix)
+name: Build Xray 1.8.24 for MT7621
 
 on:
   workflow_dispatch:
@@ -22,7 +22,6 @@ jobs:
             python3-setuptools swig zlib1g-dev wget unzip rsync ccache
 
       - name: Setup Go 1.22
-        # This ensures the host environment uses the version recommended in the GitHub issue
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
@@ -33,22 +32,24 @@ jobs:
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
+          # Add the Passwall feed
           echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
 
-      - name: Fix Golang & Xray Feeds
+      - name: Fix Golang & Dependencies
         run: |
           cd sdk
-          # 1. Use the sbwml Go feed (specifically the Go 1.22 version/branch to avoid Go 1.23 linker bugs)
+          # 1. Use the sbwml Go feed (Go 1.22 branch to avoid linker bugs)
           rm -rf feeds/packages/lang/golang
           git clone -b 22.x https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
           # 2. Remove official conflict
           rm -rf feeds/packages/net/xray-core
           
-          # 3. Strip ca-bundle (Fixes "No rule to make target")
-          sed -i 's/+ca-bundle//g' feeds/passwall_packages/xray-core/Makefile
-          sed -i 's/+ca-certificates//g' feeds/passwall_packages/xray-core/Makefile
+          # 3. FIX: Strip ca-bundle (Fixes "No rule to make target")
+          XRAY_DIR="feeds/passwall_packages/xray-core"
+          sed -i 's/+ca-bundle//g' $XRAY_DIR/Makefile
+          sed -i 's/+ca-certificates//g' $XRAY_DIR/Makefile
           
           # 4. Install feeds
           ./scripts/feeds install -a
@@ -56,12 +57,19 @@ jobs:
           # 5. FORCE SYMLINK (Your functional method)
           ln -sf ../feeds/passwall_packages/xray-core package/xray-core
 
-      - name: Patch Xray Makefile to 1.8.24
+      - name: Patch Xray Makefile for 1.8.24
         run: |
           cd sdk/package/xray-core
+          # Update version and skip hash
           sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
+          
+          # Disable UPX (Stability for MT7621)
           sed -i '/upx/d' Makefile 2>/dev/null || true
+          
+          # FIX: "No binaries were built" 
+          # We force the Go installer to be more aggressive in finding the binary
+          echo "GO_PKG_INSTALL_ALL:=1" >> Makefile
 
       - name: Compile Xray-core
         run: |
@@ -69,16 +77,20 @@ jobs:
           make defconfig
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           
-          # Build the Go compiler (Host)
-          # We pass GOMIPS=softfloat here to ensure the binary works on MT7621
+          # Use Proxy to ensure modules download correctly
           export GOPROXY=https://proxy.golang.org,direct
+          
+          # Step 1: Build the Go compiler (Host)
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Build Xray-core
-          make package/xray-core/compile V=s -j$(nproc) GO_PKG_VARS="GOMIPS=softfloat"
+          # Step 2: Build Xray-core with Softfloat for MT7621
+          # We include the GOMIPS variable here to be 100% sure
+          make package/xray-core/compile V=s -j$(nproc) \
+            GO_PKG_VARS="GOMIPS=softfloat" \
+            GO_PKG_BUILD_VARS="GOMIPS=softfloat"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xray-core-1.8.24-mt7621-go1.22
+          name: xray-core-1.8.24-mt7621
           path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk

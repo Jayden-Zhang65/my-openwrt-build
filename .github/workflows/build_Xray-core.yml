@@ -27,48 +27,50 @@ jobs:
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
-          # Add the Passwall feed (contains the Xray Makefile)
+          # Add the Passwall feed
           echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
 
       - name: Fix Golang & Xray Feeds
         run: |
           cd sdk
-          # 1. Replace the old Go (21.02's Go is too old) with a modern version
+          # 1. Replace the old Go with modern version (Required for Xray 1.8.4)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # 2. Remove the default Xray from the packages feed to avoid conflicts
+          # 2. Remove the official Xray to prevent naming conflicts
           rm -rf feeds/packages/net/xray-core
           
-          # 3. Install all feeds
+          # 3. Install feeds
           ./scripts/feeds install -a
+          
+          # 4. FORCE SYMLINK: This fixes the "No rule to make target" error
+          # We manually link the feed folder to the package folder
+          ln -sf ../feeds/passwall_packages/xray-core package/xray-core
 
       - name: Patch Xray Makefile to 1.8.4
         run: |
-          cd sdk/feeds/passwall_packages/xray-core
-          # Set the version
+          cd sdk/package/xray-core
           sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
-          # Skip hash check since we changed the version manually
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
-          # Disable UPX (causes issues on some mips devices)
           sed -i '/upx/d' Makefile 2>/dev/null || true
 
       - name: Compile Xray-core
         run: |
           cd sdk
-          # Create a default config and select Xray
+          # Generate config
           make defconfig
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           
-          # Compile Go host tool first (crucial step)
+          # Build the Go compiler first
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Compile Xray
+          # Build Xray-core using the forced path
           make package/xray-core/compile V=s -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: xray-core-1.8.4-mt7621
-          path: sdk/bin/packages/mipsel_24kc/passwall_packages/xray-core*.ipk
+          # Note: The output path might vary slightly, so we use a wildcard
+          path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk

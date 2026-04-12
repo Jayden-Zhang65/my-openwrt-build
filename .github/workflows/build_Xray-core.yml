@@ -1,4 +1,4 @@
-name: Build Xray 1.8.24 for MT7621 (Final Solution)
+name: Build Xray 1.8.24 for MT7621
 
 on:
   workflow_dispatch:
@@ -32,50 +32,36 @@ jobs:
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
-          # Add the Passwall feed
+          # 1. Add Passwall feed
           echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
+          
+          # 2. Delete official xray-core to prevent conflict
+          rm -rf feeds/packages/net/xray-core
 
-      - name: Fix Golang & Dependencies
+      - name: Fix Golang & Xray Makefile
         run: |
           cd sdk
-          # 1. Use the sbwml Go feed (Go 1.22 branch to avoid 1.23 linker bugs)
+          # 1. Use the Go 1.22 branch (Prevents Go 1.23 linker errors)
           rm -rf feeds/packages/lang/golang
           git clone -b 22.x https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # 2. Remove official conflict
-          rm -rf feeds/packages/net/xray-core
+          # 2. Modify the Makefile in the FEED folder before installing
+          XRAY_MAKEFILE="feeds/passwall_packages/xray-core/Makefile"
           
-          # 3. Strip ca-bundle (Fixes "No rule to make target")
-          sed -i 's/+ca-bundle//g' feeds/passwall_packages/xray-core/Makefile
-          sed -i 's/+ca-certificates//g' feeds/passwall_packages/xray-core/Makefile
+          # Remove ca-bundle (Fixes "No rule to make target")
+          sed -i 's/+ca-bundle//g' $XRAY_MAKEFILE
+          sed -i 's/+ca-certificates//g' $XRAY_MAKEFILE
           
-          # 4. Install feeds
+          # Update Version to 1.8.24
+          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" $XRAY_MAKEFILE
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' $XRAY_MAKEFILE
+          
+          # Disable UPX and force softfloat settings inside Makefile
+          sed -i '/upx/d' $XRAY_MAKEFILE
+          
+          # 3. Now install the fixed feed
           ./scripts/feeds install -a
-          
-          # 5. FORCE SYMLINK (Your functional method)
-          ln -sf ../feeds/passwall_packages/xray-core package/xray-core
-
-      - name: Patch Xray Makefile for 1.8.24
-        run: |
-          cd sdk/package/xray-core
-          # Update version
-          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
-          
-          # Disable UPX
-          sed -i '/upx/d' Makefile 2>/dev/null || true
-          
-          # --- THE CRITICAL FIXES FOR "NO BINARIES WERE BUILT" ---
-          # 1. Force the build package to the 'main' directory
-          sed -i 's/GO_PKG_BUILD_PKG:=.*/GO_PKG_BUILD_PKG:=github.com\/xtls\/xray-core\/main/g' Makefile
-          
-          # 2. Force the Go Build system to install all resulting binaries
-          echo "GO_PKG_INSTALL_ALL:=1" >> Makefile
-          
-          # 3. Ensure the binary is named exactly 'xray' in the final package
-          # Some Makefiles look for xray-core, some for xray.
-          sed -i 's/xray-core/xray/g' Makefile
 
       - name: Compile Xray-core
         run: |
@@ -89,10 +75,9 @@ jobs:
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
           # Build Xray-core
-          # We use the explicit path and force GOMIPS softfloat
-          make package/xray-core/compile V=s -j$(nproc) \
-            GO_PKG_VARS="GOMIPS=softfloat" \
-            GO_PKG_INSTALL_ALL=1
+          # Using the feed-based path is the correct way for 21.02 SDK
+          make package/feeds/passwall_packages/xray-core/compile V=s -j$(nproc) \
+            GO_PKG_VARS="GOMIPS=softfloat"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

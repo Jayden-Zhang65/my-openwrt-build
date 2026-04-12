@@ -5,6 +5,7 @@ on:
 
 env:
   SDK_URL: "https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+  # 1.8.24 fixes the "unknown router rule type" compatibility issue found in 1.8.4
   XRAY_VER: "1.8.24"
 
 jobs:
@@ -27,50 +28,47 @@ jobs:
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
           cd sdk
-          # Add the Passwall feed
           echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
 
-      - name: Fix Golang & Xray Feeds
+      - name: Fix Golang & Dependencies
         run: |
           cd sdk
-          # 1. Replace the old Go with modern version (Required for Xray 1.8.x)
+          # Use modern Go (Required for Xray 1.8.x)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # 2. Remove the official Xray to prevent naming conflicts
+          # Fix the ca-bundle/ca-certificates dependency issue
+          XRAY_DIR="feeds/passwall_packages/xray-core"
+          sed -i 's/+ca-bundle//g' $XRAY_DIR/Makefile
+          sed -i 's/+ca-certificates//g' $XRAY_DIR/Makefile
+          
+          # Set Version to 1.8.24
+          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" $XRAY_DIR/Makefile
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' $XRAY_DIR/Makefile
+          
+          # Ensure UPX is disabled for MIPS stability
+          sed -i '/upx/d' $XRAY_DIR/Makefile 2>/dev/null || true
+          
+          # Remove official conflict and install
           rm -rf feeds/packages/net/xray-core
-          
-          # 3. Install feeds
           ./scripts/feeds install -a
-          
-          # 4. FORCE SYMLINK: This fixes the "No rule to make target" error
-          # We manually link the feed folder to the package folder
-          ln -sf ../feeds/passwall_packages/xray-core package/xray-core
-
-      - name: Patch Xray Makefile to 1.8.x
-        run: |
-          cd sdk/package/xray-core
-          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ env.XRAY_VER }}/g" Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
-          sed -i '/upx/d' Makefile 2>/dev/null || true
 
       - name: Compile Xray-core
         run: |
           cd sdk
-          # Generate config
           make defconfig
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           
-          # Build the Go compiler first
+          # Build Go host tool
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Build Xray-core using the forced path
-          make package/xray-core/compile V=s -j$(nproc)
+          # Build Xray-core with softfloat for MT7621
+          make package/feeds/passwall_packages/xray-core/compile V=s -j$(nproc) \
+            GO_PKG_VARS="GOMIPS=softfloat"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: xray-core-1.8.24-mt7621
-          # Note: The output path might vary slightly, so we use a wildcard
           path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk

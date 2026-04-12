@@ -1,0 +1,77 @@
+name: Build Xray-core 1.8.4 for OpenWrt 21.02.7
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
+            python3-setuptools swig zlib1g-dev wget unzip rsync upx-ucl
+
+      - name: Download and Extract SDK
+        run: |
+          SDK_URL="https://downloads.openwrt.org/releases/21.02.7/targets/ramips/mt7621/openwrt-sdk-21.02.7-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+          wget -q $SDK_URL -O sdk.tar.xz
+          mkdir sdk
+          tar -xJf sdk.tar.xz -C sdk --strip-components=1
+
+      - name: Clone Source Code & Apply Fixes
+        run: |
+          cd sdk
+          
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # 1. Update Golang to the latest master (Provides modern Go compiler required for Xray)
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
+          
+          # 2. Clone Passwall's official packages feed
+          git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
+          
+          # 3. THE MAGIC FIX: Force the Makefile to download and build version 1.8.4
+          cd package/passwall-packages/xray-core
+          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=1.8.4/g' Makefile
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
+          
+          # 4. Disable UPX compression and stripping to prevent MIPS crash
+          sed -i '/upx/d' Makefile 2>/dev/null || true
+          echo "STRIP:=true" >> Makefile
+          
+          cd ../../../
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure and Compile
+        run: |
+          cd sdk
+          
+          echo "CONFIG_PACKAGE_xray-core=y" >> .config
+          
+          export GOPROXY=https://proxy.golang.org,direct
+          
+          make defconfig
+          
+          # Step 1: Compile Golang Host Tool
+          make package/feeds/packages/golang/host/compile V=s -j$(nproc)
+          
+          # Step 2: Compile Xray-core
+          make package/passwall-packages/xray-core/compile V=s STRIP=true -j$(nproc)
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray-core-1.8.4-mt7621
+          path: sdk/bin/packages/mipsel_24kc/*/xray-core*.ipk

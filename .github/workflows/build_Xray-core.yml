@@ -27,48 +27,46 @@ jobs:
           mkdir sdk
           tar -xJf sdk.tar.xz -C sdk --strip-components=1
 
-      - name: Clone Source Code & Apply Fixes
+      - name: Update Feeds & Add Passwall
         run: |
           cd sdk
+          # 1. Add Passwall Packages feed
+          echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages" >> feeds.conf.default
           
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
           
-          # 1. Update Golang to the latest master (Provides modern Go compiler required for Xray)
+          # 2. Use modern Golang (Go 1.25+)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
           
-          # 2. Clone Passwall's official packages feed
-          git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
+          # 3. Install all feeds
+          ./scripts/feeds install -a
           
-          # 3. THE MAGIC FIX: Force the Makefile to download and build version 1.8.4
-          cd package/passwall-packages/xray-core
+          # 4. THE MAGIC FIX: Downgrade Xray to 1.8.4 inside the feed folder
+          # In the feed system, the Makefile is located in feeds/passwall_packages/xray-core/
+          cd feeds/passwall_packages/xray-core
           sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=1.8.4/g' Makefile
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' Makefile
           
-          # 4. Disable UPX compression and stripping to prevent MIPS crash
+          # Disable UPX and force STRIP:=true (same as MosDNS fix)
           sed -i '/upx/d' Makefile 2>/dev/null || true
           echo "STRIP:=true" >> Makefile
-          
-          cd ../../../
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
       - name: Configure and Compile
         run: |
           cd sdk
-          
+          # Select Xray-core
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           
           export GOPROXY=https://proxy.golang.org,direct
-          
           make defconfig
           
           # Step 1: Compile Golang Host Tool
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
           
-          # Step 2: Compile Xray-core
-          make package/passwall-packages/xray-core/compile V=s STRIP=true -j$(nproc)
+          # Step 2: Compile Xray-core using the correct feed-based path
+          # For feeds, the path is package/feeds/[feed_name]/[package_name]
+          make package/feeds/passwall_packages/xray-core/compile V=s STRIP=true -j$(nproc)
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

@@ -62,9 +62,9 @@ jobs:
           echo "CONFIG_PACKAGE_sing-box=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_ACME=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_CLASH_API=y" >> .config
-          echo "CONFIG_SING_BOX_BUILD_GVISOR=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_QUIC=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_UTLS=y" >> .config
+          echo "# CONFIG_SING_BOX_BUILD_GVISOR is not set" >> .config
           echo "# CONFIG_SING_BOX_BUILD_TAILSCALE is not set" >> .config
           echo "# CONFIG_SING_BOX_BUILD_WIREGUARD is not set" >> .config
 

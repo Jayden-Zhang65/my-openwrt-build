@@ -65,7 +65,8 @@ jobs:
           echo "CONFIG_SING_BOX_BUILD_GVISOR=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_QUIC=y" >> .config
           echo "CONFIG_SING_BOX_BUILD_UTLS=y" >> .config
-          echo "CONFIG_SING_BOX_BUILD_WIREGUARD=y" >> .config
+          echo "# CONFIG_SING_BOX_BUILD_TAILSCALE is not set" >> .config
+          echo "# CONFIG_SING_BOX_BUILD_WIREGUARD is not set" >> .config
 
       - name: Add swap (sing-box + gvisor needs more RAM)
         run: |
@@ -77,9 +78,10 @@ jobs:
       - name: Compile sing-box
         run: |
           cd sdk
+          set -o pipefail
           export GOPROXY=https://proxy.golang.org,direct
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
-          make package/sing-box/compile V=s -j1 2>&1 | tee /tmp/sing-box-build.log | tail -100
+          make package/sing-box/compile V=s -j1 2>&1 | tee /tmp/sing-box-build.log
 
       - name: Upload Artifact
         if: success()

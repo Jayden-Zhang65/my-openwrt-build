@@ -59,26 +59,38 @@ jobs:
         run: |
           cd sdk
           make defconfig
-          cat >> .config << 'EOF'
-          CONFIG_PACKAGE_sing-box=y
-          CONFIG_SING_BOX_BUILD_ACME=y
-          CONFIG_SING_BOX_BUILD_CLASH_API=y
-          CONFIG_SING_BOX_BUILD_GVISOR=y
-          CONFIG_SING_BOX_BUILD_QUIC=y
-          CONFIG_SING_BOX_BUILD_TAILSCALE=y
-          CONFIG_SING_BOX_BUILD_UTLS=y
-          CONFIG_SING_BOX_BUILD_WIREGUARD=y
-          EOF
+          echo "CONFIG_PACKAGE_sing-box=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_ACME=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_CLASH_API=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_GVISOR=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_QUIC=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_UTLS=y" >> .config
+          echo "CONFIG_SING_BOX_BUILD_WIREGUARD=y" >> .config
+
+      - name: Add swap (sing-box + gvisor needs more RAM)
+        run: |
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
 
       - name: Compile sing-box
         run: |
           cd sdk
           export GOPROXY=https://proxy.golang.org,direct
           make package/feeds/packages/golang/host/compile V=s -j$(nproc)
-          make package/sing-box/compile V=s -j$(nproc)
+          make package/sing-box/compile V=s -j1 2>&1 | tee /tmp/sing-box-build.log | tail -100
 
       - name: Upload Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: sing-box-openwrt-21.02.7-mt7621-passwall-packages
           path: sdk/bin/packages/mipsel_24kc/*/sing-box*.ipk
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-build-log
+          path: /tmp/sing-box-build.log

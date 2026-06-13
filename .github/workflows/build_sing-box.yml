@@ -69,10 +69,10 @@ jobs:
 
       - name: Add swap (sing-box + gvisor needs more RAM)
         run: |
-          sudo fallocate -l 4G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 4G /mnt/swapfile2
+          sudo chmod 600 /mnt/swapfile2
+          sudo mkswap /mnt/swapfile2
+          sudo swapon /mnt/swapfile2
 
       - name: Compile sing-box
         run: |

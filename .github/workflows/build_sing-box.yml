@@ -41,9 +41,11 @@ jobs:
 
           rm -rf feeds/packages/net/sing-box
 
-          # 去掉ca-bundle依赖（SDK镜像中缺少该包源）
+          # 去掉目标设备上不存在的依赖
           sed -i 's/+ca-bundle//g' feeds/passwall_packages/sing-box/Makefile
           sed -i 's/+ca-certificates//g' feeds/passwall_packages/sing-box/Makefile
+          sed -i 's/+kmod-inet-diag//g' feeds/passwall_packages/sing-box/Makefile
+          sed -i 's/+kmod-netlink-diag//g' feeds/passwall_packages/sing-box/Makefile
 
           # 关键修复：强制禁用 CGO，避免 mips16 + runtime/cgo 汇编错误
           sed -i '/GO_PKG_LDFLAGS_X/a GO_PKG_CGO_ENABLED:=0' feeds/passwall_packages/sing-box/Makefile
